@@ -1,0 +1,78 @@
+/*
+  Google Apps Script สำหรับรับข้อมูลจาก ESP32 และบันทึกลง Google Sheets
+
+  วิธีใช้งาน:
+  1. เปิด Google Sheets ที่ต้องการใช้เก็บข้อมูล
+  2. ไปที่เมนู ส่วนขยาย (Extensions) > Apps Script
+  3. วางโค้ดนี้แทนโค้ดเดิมทั้งหมด
+  4. กด Deploy > New deployment
+     - เลือกประเภทเป็น "Web app"
+     - Execute as: Me
+     - Who has access: Anyone
+  5. คัดลอก URL ที่ได้ (ลงท้ายด้วย /exec) ไปใส่ในตัวแปร GAS_URL ของโค้ด ESP32
+*/
+
+function doPost(e) {
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+
+    // ถ้ายังไม่มีหัวตาราง ให้สร้างหัวตารางในแถวแรก
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow(["Timestamp (ESP32)", "Temperature (C)", "Humidity (%)", "Received At (Server)"]);
+    }
+
+    var data = JSON.parse(e.postData.contents);
+
+    var timestamp   = data.timestamp;
+    var temperature = data.temperature;
+    var humidity    = data.humidity;
+    var receivedAt  = new Date();
+
+    // เพิ่มข้อมูลเป็นแถวใหม่ทุกครั้ง เพื่อเก็บประวัติย้อนหลังทั้งหมด
+    sheet.appendRow([timestamp, temperature, humidity, receivedAt]);
+
+    return ContentService
+      .createTextOutput(JSON.stringify({ status: "success" }))
+      .setMimeType(ContentService.MimeType.JSON);
+
+  } catch (error) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ status: "error", message: error.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+// ใช้สำหรับให้เว็บหน้าบ้าน (เช่น GitHub Pages) ดึงค่าล่าสุดไปแสดงผล
+// เรียกผ่าน GET ไปที่ URL เดียวกับ GAS_URL (ลงท้าย /exec)
+// จะดึงข้อมูล "แถวล่าสุด" เสมอ แม้ข้อมูลในชีตจะเพิ่มแถวใหม่ไปเรื่อยๆ ก็ตาม
+function doGet(e) {
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    var lastRow = sheet.getLastRow();
+
+    if (lastRow < 2) {
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: "empty" }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var row = sheet.getRange(lastRow, 1, 1, 4).getValues()[0];
+
+    var result = {
+      status: "success",
+      timestamp: row[0],
+      temperature: row[1],
+      humidity: row[2],
+      receivedAt: row[3]
+    };
+
+    return ContentService
+      .createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+
+  } catch (error) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ status: "error", message: error.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
