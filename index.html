@@ -1,78 +1,161 @@
-/*
-  Google Apps Script สำหรับรับข้อมูลจาก ESP32 และบันทึกลง Google Sheets
-
-  วิธีใช้งาน:
-  1. เปิด Google Sheets ที่ต้องการใช้เก็บข้อมูล
-  2. ไปที่เมนู ส่วนขยาย (Extensions) > Apps Script
-  3. วางโค้ดนี้แทนโค้ดเดิมทั้งหมด
-  4. กด Deploy > New deployment
-     - เลือกประเภทเป็น "Web app"
-     - Execute as: Me
-     - Who has access: Anyone
-  5. คัดลอก URL ที่ได้ (ลงท้ายด้วย /exec) ไปใส่ในตัวแปร GAS_URL ของโค้ด ESP32
-*/
-
-function doPost(e) {
-  try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-
-    // ถ้ายังไม่มีหัวตาราง ให้สร้างหัวตารางในแถวแรก
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow(["Timestamp (ESP32)", "Temperature (C)", "Humidity (%)", "Received At (Server)"]);
-    }
-
-    var data = JSON.parse(e.postData.contents);
-
-    var timestamp   = data.timestamp;
-    var temperature = data.temperature;
-    var humidity    = data.humidity;
-    var receivedAt  = new Date();
-
-    // เพิ่มข้อมูลเป็นแถวใหม่ทุกครั้ง เพื่อเก็บประวัติย้อนหลังทั้งหมด
-    sheet.appendRow([timestamp, temperature, humidity, receivedAt]);
-
-    return ContentService
-      .createTextOutput(JSON.stringify({ status: "success" }))
-      .setMimeType(ContentService.MimeType.JSON);
-
-  } catch (error) {
-    return ContentService
-      .createTextOutput(JSON.stringify({ status: "error", message: error.toString() }))
-      .setMimeType(ContentService.MimeType.JSON);
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>สถานะเซนเซอร์ (Real-time)</title>
+<style>
+  :root {
+    --bg: #f2f3f1;
+    --card-bg: #ffffff;
+    --text-main: #2b2f36;
+    --text-muted: #8a8f98;
+    --value-color: #1f2430;
   }
-}
 
-// ใช้สำหรับให้เว็บหน้าบ้าน (เช่น GitHub Pages) ดึงค่าล่าสุดไปแสดงผล
-// เรียกผ่าน GET ไปที่ URL เดียวกับ GAS_URL (ลงท้าย /exec)
-// จะดึงข้อมูล "แถวล่าสุด" เสมอ แม้ข้อมูลในชีตจะเพิ่มแถวใหม่ไปเรื่อยๆ ก็ตาม
-function doGet(e) {
-  try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-    var lastRow = sheet.getLastRow();
+  * { box-sizing: border-box; }
 
-    if (lastRow < 2) {
-      return ContentService
-        .createTextOutput(JSON.stringify({ status: "empty" }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
-    var row = sheet.getRange(lastRow, 1, 1, 4).getValues()[0];
-
-    var result = {
-      status: "success",
-      timestamp: row[0],
-      temperature: row[1],
-      humidity: row[2],
-      receivedAt: row[3]
-    };
-
-    return ContentService
-      .createTextOutput(JSON.stringify(result))
-      .setMimeType(ContentService.MimeType.JSON);
-
-  } catch (error) {
-    return ContentService
-      .createTextOutput(JSON.stringify({ status: "error", message: error.toString() }))
-      .setMimeType(ContentService.MimeType.JSON);
+  body {
+    margin: 0;
+    padding: 32px 20px 60px;
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Thai", "Sarabun", sans-serif;
+    color: var(--text-main);
   }
-}
+
+  h1 {
+    font-size: 1.7rem;
+    font-weight: 800;
+    margin: 0 0 28px;
+    text-align: left;
+  }
+
+  .card {
+    background: var(--card-bg);
+    border-radius: 22px;
+    padding: 40px 24px;
+    max-width: 480px;
+    margin: 0 auto 20px;
+    text-align: center;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+
+  .card .label {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--text-main);
+    margin-bottom: 24px;
+  }
+
+  .card .value {
+    font-size: 2.6rem;
+    font-weight: 700;
+    color: var(--value-color);
+    line-height: 1;
+    min-height: 1.2em;
+    transition: opacity 0.2s ease;
+  }
+
+  .card .value.placeholder {
+    letter-spacing: 6px;
+  }
+
+  .updated {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    margin-top: 12px;
+  }
+
+  .updated .status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    background: #c9cdd3;
+    transition: background 0.3s ease;
+  }
+
+  .updated .status-dot.live {
+    background: #34c759;
+  }
+
+  .updated .status-dot.error {
+    background: #ff3b30;
+  }
+</style>
+</head>
+<body>
+
+  <h1>สถานะเซนเซอร์ (Real-time)</h1>
+
+  <div class="card">
+    <div class="label">อุณหภูมิ</div>
+    <div class="value placeholder" id="temperature">--</div>
+  </div>
+
+  <div class="card">
+    <div class="label">ความชื้น</div>
+    <div class="value placeholder" id="humidity">--</div>
+  </div>
+
+  <div class="updated">
+    <span class="status-dot" id="statusDot"></span>
+    <span id="updatedText">อัปเดตล่าสุด: กำลังโหลด...</span>
+  </div>
+
+<script>
+  // ใส่ URL ของ Google Apps Script Web App ที่ Deploy ไว้ (ลงท้ายด้วย /exec)
+  const GAS_URL = "https://script.google.com/macros/s/AKfycbyS6CbuDF5fjeH3sOBE6ONwp80JOca3fpAa6Yt-90nCKlnUDK0BLkdz6gLRfVmFQ8T_/exec";
+
+  // ดึงข้อมูลใหม่ทุกกี่วินาที
+  const REFRESH_INTERVAL_MS = 5000;
+
+  const tempEl = document.getElementById("temperature");
+  const humEl = document.getElementById("humidity");
+  const updatedEl = document.getElementById("updatedText");
+  const dotEl = document.getElementById("statusDot");
+
+  function formatThaiTime(date) {
+    return date.toLocaleString("th-TH", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    });
+  }
+
+  async function fetchData() {
+    try {
+      const res = await fetch(GAS_URL, { cache: "no-store" });
+      const data = await res.json();
+
+      if (data.status !== "success") {
+        throw new Error(data.message || "ไม่มีข้อมูล");
+      }
+
+      tempEl.textContent = Number(data.temperature).toFixed(1) + " °C";
+      humEl.textContent = Number(data.humidity).toFixed(1) + " %";
+      tempEl.classList.remove("placeholder");
+      humEl.classList.remove("placeholder");
+
+      updatedEl.textContent = "อัปเดตล่าสุด: " + formatThaiTime(new Date());
+      dotEl.classList.remove("error");
+      dotEl.classList.add("live");
+
+    } catch (err) {
+      updatedEl.textContent = "เชื่อมต่อไม่สำเร็จ: " + err.message;
+      dotEl.classList.remove("live");
+      dotEl.classList.add("error");
+    }
+  }
+
+  fetchData();
+  setInterval(fetchData, REFRESH_INTERVAL_MS);
+</script>
+
+</body>
+</html>
